@@ -66,14 +66,10 @@ public class PeerManager {
             return;
         }
 
-        // step 2 — get peer's bitfield
-        // for local testing all peers have all pieces
-        boolean[] peerBitfield = new boolean[pieceManager.getTotalPieces()];
-        for (int i = 0; i < peerBitfield.length; i++) {
-            peerBitfield[i] = true; // assume peer has everything
-        }
+        // step 2 — BITFIELD / INTERESTED / UNCHOKE
+        boolean[] peerBitfield = connection.performMessageExchange(
+            pieceManager.getTotalPieces());
         pieceManager.updateAvailability(peerBitfield);
-
         // step 3 — download pieces one by one
         while (!pieceManager.isComplete()) {
             // get next piece to download — rarest first

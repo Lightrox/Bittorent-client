@@ -8,11 +8,12 @@ import java.util.List;
 import java.util.ArrayList;
 import java.net.*;
 import java.io.*;
+import java.util.Arrays;
+import peer.PeerMessage;
 
 public class App {
 
-    static final String INFO_HASH_ENCODED = 
-        "%45%5A%D4%8C%E8%CD%08%15%6D%F3%6F%31%5B%42%B1%AC%3A%71%82%45";
+    static final String INFO_HASH_ENCODED = "%45%5A%D4%8C%E8%CD%08%15%6D%F3%6F%31%5B%42%B1%AC%3A%71%82%45";
     static final String TRACKER_URL = "http://localhost:8080/announce";
     static final int PIECE_SIZE = 512 * 1024; // 512KB
 
@@ -133,13 +134,13 @@ public class App {
         DataInputStream in = new DataInputStream(socket.getInputStream());
         DataOutputStream out = new DataOutputStream(socket.getOutputStream());
 
-        // complete handshake
+        // read incoming handshake
         int pstrLen = in.readByte() & 0xFF;
         byte[] pstr = new byte[pstrLen];
         in.readFully(pstr);
-        in.readFully(new byte[8]); // reserved
-        in.readFully(new byte[20]); // info hash
-        in.readFully(new byte[20]); // peer id
+        in.readFully(new byte[8]);
+        in.readFully(new byte[20]);
+        in.readFully(new byte[20]);
 
         // send handshake back
         ByteArrayOutputStream handshake = new ByteArrayOutputStream();
@@ -152,7 +153,19 @@ public class App {
         out.flush();
         System.out.println("Handshake completed");
 
-        // serve piece requests
+        // BITFIELD → INTERESTED → UNCHOKE
+        boolean[] seederBitfield = new boolean[totalPieces];
+        Arrays.fill(seederBitfield, true);
+        byte[] bitfieldPayload = PeerMessage.buildBitfield(seederBitfield);
+        PeerMessage.send(out, PeerMessage.BITFIELD, bitfieldPayload);
+        System.out.println("Sent BITFIELD");
+
+        PeerMessage msg = PeerMessage.read(in);
+        System.out.println("Received: " + msg);
+
+        PeerMessage.send(out, PeerMessage.UNCHOKE);
+        System.out.println("Sent UNCHOKE — peer can now request pieces");
+
         // serve piece requests
         try {
             while (true) {

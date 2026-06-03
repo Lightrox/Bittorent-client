@@ -127,6 +127,39 @@ public class PeerConnection {
         return pieceData;
     }
 
+    public boolean[] performMessageExchange(int totalPieces) throws Exception {
+        System.out.println("Waiting for bitfield...");
+
+        // read first message — should be bitfield
+        PeerMessage msg = PeerMessage.read(in);
+        System.out.println("Received: " + msg);
+
+        boolean[] peerBitfield = new boolean[totalPieces];
+
+        if (msg.getType() == PeerMessage.BITFIELD) {
+            peerBitfield = PeerMessage.parseBitfield(msg.getPayload(), totalPieces);
+            int count = 0;
+            for (boolean b : peerBitfield) if (b) count++;
+            System.out.println("Peer has " + count + "/" + totalPieces + " pieces");
+        }
+
+        // send interested
+        System.out.println("Sending INTERESTED...");
+        PeerMessage.send(out, PeerMessage.INTERESTED);
+
+        // wait for unchoke
+        System.out.println("Waiting for UNCHOKE...");
+        msg = PeerMessage.read(in);
+        System.out.println("Received: " + msg);
+
+        if (msg.getType() != PeerMessage.UNCHOKE) {
+            throw new Exception("Expected UNCHOKE but got: " + msg.getTypeName());
+        }
+
+        System.out.println("Unchoked! Ready to download pieces.");
+        return peerBitfield;
+    }
+
     public void close() {
         try {
             if (socket != null) socket.close();
