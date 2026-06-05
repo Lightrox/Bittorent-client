@@ -13,22 +13,38 @@ import peer.PeerMessage;
 
 public class App {
 
-    static final String INFO_HASH_ENCODED = "%45%5A%D4%8C%E8%CD%08%15%6D%F3%6F%31%5B%42%B1%AC%3A%71%82%45";
-    static final String TRACKER_URL = "http://localhost:8080/announce";
     static final int PIECE_SIZE = 512 * 1024; // 512KB
 
     public static void main(String[] args) throws Exception {
 
-        int port = args.length > 0 ? Integer.parseInt(args[0]) : 6881;
-        String mode = args.length > 1 ? args[1] : "leecher";
-        System.out.println("Starting client on port: " + port + " mode: " + mode);
+        if (args.length == 0) {
+            System.out.println("Usage: java App <torrent-file> [port] [mode]");
+            System.out.println("Example: java App torrents\\forza.torrent 6881 leecher");
+            return;
+        }
 
-        byte[] infoHash = urlDecodeToBytes(INFO_HASH_ENCODED);
+        String torrentPath = args[0];
+        int port = args.length > 1 ? Integer.parseInt(args[1]) : 6881;
+        String mode = args.length > 2 ? args[2] : "leecher";
+
+        System.out.println("Loading torrent: " + torrentPath);
+        TorrentMetadata metadata = TorrentMetadata.fromFile(torrentPath);
+
+        String infoHashEncoded = metadata.getInfoHashUrlEncoded();
+        byte[] infoHash = metadata.getInfoHash();
+        String announceUrl = metadata.getAnnounceUrl();
+        long fileSize = metadata.getFileSize();
+        int totalPieces = metadata.getTotalPieces();
+        int pieceSize = metadata.getPieceLength();
+        byte[][] pieceHashes = metadata.getPieceHashes();
+
         String peerIdStr = "-BT0001-" + String.format("%012d",
-            new java.util.Random().nextInt(1000000000));
+                new java.util.Random().nextInt(1000000000));
         byte[] peerId = peerIdStr.getBytes("UTF-8");
 
-        TrackerClient tracker = new TrackerClient(TRACKER_URL, INFO_HASH_ENCODED, port);
+        System.out.println("Starting client on port: " + port + " mode: " + mode);
+
+        TrackerClient tracker = new TrackerClient(announceUrl, infoHashEncoded, port);
 
         // SEEDER MODE
         if (mode.equals("seeder")) {
@@ -41,36 +57,33 @@ public class App {
                 System.out.println("Tracker note: " + e.getMessage());
             }
 
-            // load file to serve
             File fileToServe = new File(
-                "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\test-files\\sample.pdf");
+                    "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\test-files\\sample.pdf");
             byte[] fileData = java.nio.file.Files.readAllBytes(fileToServe.toPath());
-            System.out.println("Serving file: " + fileToServe.getName() 
-                + " (" + fileData.length + " bytes)");
+            System.out.println("Serving file: " + fileToServe.getName()
+                    + " (" + fileData.length + " bytes)");
 
-            // split into pieces
-            int totalPieces = (int) Math.ceil((double) fileData.length / PIECE_SIZE);
-            byte[][] pieces = new byte[totalPieces][];
-            for (int i = 0; i < totalPieces; i++) {
+            int filePieces = (int) Math.ceil((double) fileData.length / PIECE_SIZE);
+            byte[][] pieces = new byte[filePieces][];
+            for (int i = 0; i < filePieces; i++) {
                 int start = i * PIECE_SIZE;
                 int end = Math.min(start + PIECE_SIZE, fileData.length);
                 pieces[i] = new byte[end - start];
                 System.arraycopy(fileData, start, pieces[i], 0, pieces[i].length);
             }
-            System.out.println("File split into " + totalPieces + " pieces");
+            System.out.println("File split into " + filePieces + " pieces");
 
-            // listen for incoming connections
             ServerSocket serverSocket = new ServerSocket(port);
             System.out.println("Seeder listening on port " + port + "...");
 
             while (true) {
                 Socket socket = serverSocket.accept();
-                System.out.println("Peer connected: " 
-                    + socket.getInetAddress().getHostAddress());
+                System.out.println("Peer connected: "
+                        + socket.getInetAddress().getHostAddress());
                 final Socket s = socket;
                 new Thread(() -> {
                     try {
-                        handlePeer(s, infoHash, peerId, pieces, totalPieces);
+                        handlePeer(s, infoHash, peerId, pieces, filePieces);
                     } catch (Exception e) {
                         System.out.println("Peer error: " + e.getMessage());
                     }
@@ -81,7 +94,6 @@ public class App {
         // LEECHER MODE
         System.out.println("Running as leecher...");
 
-        // get peers from tracker
         List<PeerInfo> peers = new ArrayList<>();
         for (int attempt = 1; attempt <= 5; attempt++) {
             try {
@@ -102,30 +114,21 @@ public class App {
             return;
         }
 
-        // get file size from seeder first
-        // for now hardcode — week 6 will read from .torrent file
-        File sourceFile = new File(
-            "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\test-files\\sample.pdf");
-        long fileSize = sourceFile.length();
-        int totalPieces = (int) Math.ceil((double) fileSize / PIECE_SIZE);
-
         System.out.println("File size: " + fileSize + " bytes");
         System.out.println("Total pieces: " + totalPieces);
 
-        // set up download components
         PieceManager pieceManager = new PieceManager(
-            totalPieces, PIECE_SIZE, fileSize, null); // null hashes for now
+                totalPieces, pieceSize, fileSize, pieceHashes);
 
-        FileWriter fileWriter = new FileWriter(
-            "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\received\\downloaded.pdf",
-            fileSize, PIECE_SIZE);
+        String outputPath = "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\received\\"
+                + metadata.getFileName();
 
-        // start parallel download
-        PeerManager peerManager = new PeerManager(
-            peers, pieceManager, fileWriter, infoHash, peerId, port);
+        FileWriter fileWriter = new FileWriter(outputPath, fileSize, pieceSize);
+
+        PeerManager peerManager = new PeerManager(peers, pieceManager, fileWriter, infoHash, peerId, port);
         peerManager.startDownload();
 
-        System.out.println("Done! Check received/downloaded.pdf");
+        System.out.println("Done! Check received/" + metadata.getFileName());
     }
 
     private static void handlePeer(Socket socket, byte[] infoHash,
@@ -134,7 +137,6 @@ public class App {
         DataInputStream in = new DataInputStream(socket.getInputStream());
         DataOutputStream out = new DataOutputStream(socket.getOutputStream());
 
-        // read incoming handshake
         int pstrLen = in.readByte() & 0xFF;
         byte[] pstr = new byte[pstrLen];
         in.readFully(pstr);
@@ -142,7 +144,6 @@ public class App {
         in.readFully(new byte[20]);
         in.readFully(new byte[20]);
 
-        // send handshake back
         ByteArrayOutputStream handshake = new ByteArrayOutputStream();
         handshake.write(19);
         handshake.write("BitTorrent protocol".getBytes("UTF-8"));
@@ -153,7 +154,6 @@ public class App {
         out.flush();
         System.out.println("Handshake completed");
 
-        // BITFIELD → INTERESTED → UNCHOKE
         boolean[] seederBitfield = new boolean[totalPieces];
         Arrays.fill(seederBitfield, true);
         byte[] bitfieldPayload = PeerMessage.buildBitfield(seederBitfield);
@@ -166,11 +166,11 @@ public class App {
         PeerMessage.send(out, PeerMessage.UNCHOKE);
         System.out.println("Sent UNCHOKE — peer can now request pieces");
 
-        // serve piece requests
         try {
             while (true) {
                 int messageLength = in.readInt();
-                if (messageLength == 0) continue;
+                if (messageLength == 0)
+                    continue;
 
                 int messageId = in.readByte() & 0xFF;
 
@@ -191,7 +191,7 @@ public class App {
                     out.flush();
 
                     System.out.println("Sent piece " + pieceIndex
-                        + " (" + pieceData.length + " bytes)");
+                            + " (" + pieceData.length + " bytes)");
                 }
             }
         } catch (EOFException e) {

@@ -128,35 +128,56 @@ public class PeerConnection {
     }
 
     public boolean[] performMessageExchange(int totalPieces) throws Exception {
-        System.out.println("Waiting for bitfield...");
-
-        // read first message — should be bitfield
-        PeerMessage msg = PeerMessage.read(in);
-        System.out.println("Received: " + msg);
-
         boolean[] peerBitfield = new boolean[totalPieces];
+        boolean unchoked = false;
 
-        if (msg.getType() == PeerMessage.BITFIELD) {
-            peerBitfield = PeerMessage.parseBitfield(msg.getPayload(), totalPieces);
-            int count = 0;
-            for (boolean b : peerBitfield) if (b) count++;
-            System.out.println("Peer has " + count + "/" + totalPieces + " pieces");
-        }
-
-        // send interested
+        // send interested first (often peers won't unchoke until we are interested)
         System.out.println("Sending INTERESTED...");
         PeerMessage.send(out, PeerMessage.INTERESTED);
 
-        // wait for unchoke
-        System.out.println("Waiting for UNCHOKE...");
-        msg = PeerMessage.read(in);
-        System.out.println("Received: " + msg);
+        System.out.println("Entering message exchange loop...");
+        while (!unchoked) {
+            PeerMessage msg = PeerMessage.read(in);
+            System.out.println("Received: " + msg);
 
-        if (msg.getType() != PeerMessage.UNCHOKE) {
-            throw new Exception("Expected UNCHOKE but got: " + msg.getTypeName());
+            if (msg.getType() == -1) {
+                // keepalive, do nothing
+                continue;
+            }
+
+            switch (msg.getType()) {
+                case PeerMessage.BITFIELD:
+                    peerBitfield = PeerMessage.parseBitfield(msg.getPayload(), totalPieces);
+                    int count = 0;
+                    for (boolean b : peerBitfield) if (b) count++;
+                    System.out.println("Peer has " + count + "/" + totalPieces + " pieces");
+                    break;
+
+                case PeerMessage.HAVE:
+                    ByteArrayInputStream bais = new ByteArrayInputStream(msg.getPayload());
+                    DataInputStream dis = new DataInputStream(bais);
+                    int pieceIndex = dis.readInt();
+                    if (pieceIndex >= 0 && pieceIndex < totalPieces) {
+                        peerBitfield[pieceIndex] = true;
+                    }
+                    System.out.println("Peer announced they have piece: " + pieceIndex);
+                    break;
+
+                case PeerMessage.UNCHOKE:
+                    unchoked = true;
+                    System.out.println("Unchoked! Ready to download pieces.");
+                    break;
+
+                case PeerMessage.CHOKE:
+                    System.out.println("Choked by peer.");
+                    break;
+
+                default:
+                    System.out.println("Received: " + msg.getTypeName() + " message — ignoring...");
+                    break;
+            }
         }
 
-        System.out.println("Unchoked! Ready to download pieces.");
         return peerBitfield;
     }
 
