@@ -129,6 +129,7 @@ public class PeerConnection {
 
     public boolean[] performMessageExchange(int totalPieces) throws Exception {
         boolean[] peerBitfield = new boolean[totalPieces];
+        java.util.Arrays.fill(peerBitfield, true);
         boolean unchoked = false;
 
         // send interested first (often peers won't unchoke until we are interested)

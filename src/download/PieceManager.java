@@ -91,6 +91,10 @@ public class PieceManager {
         return completedCount == totalPieces;
     }
 
+    public synchronized int getCompletedCount() {
+        return completedCount;
+    }
+
     public synchronized int getRemainingCount() {
         return totalPieces - completedCount;
     }

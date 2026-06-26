@@ -250,8 +250,31 @@ java -cp bin App 6882 seeder
 java -cp bin App 6881 leecher
 ```
 
+**Run GUI:**
+To launch the graphical user interface, run the client with no arguments:
+```bash
+java -cp bin App
+```
+*(This launches a Swing window where you can browse and select a `.torrent` file, set the port, and click "Start Download".)*
+
+**Local Test Swarm (Demonstration):**
+To run a complete download demonstration locally using the generated sample torrent:
+1. **Start Tracker:**
+   ```bash
+   java -cp bin tracker.Tracker
+   ```
+2. **Start Seeder:**
+   ```bash
+   java -cp bin App torrents\sample.torrent 6882 seeder
+   ```
+3. **Start Leecher (GUI):**
+   * Run `java -cp bin App` to open the GUI.
+   * Click **Browse** and select `torrents\sample.torrent`.
+   * Set Port to `6881` and Mode to `leecher`.
+   * Click **Start Download** to download the file directly from the local seeder.
+
+
 ## What's Next
 
-- Bencode parser to read real `.torrent` files
-- Connect to real peers on the internet
 - JAR packaging for easy distribution
+- Implementing UDP protocol

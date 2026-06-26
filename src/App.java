@@ -15,11 +15,15 @@ public class App {
 
     static final int PIECE_SIZE = 512 * 1024; // 512KB
 
-    public static void main(String[] args) throws Exception {
+    // state variables for GUI tracking
+    public static volatile PieceManager activePieceManager = null;
+    public static volatile String activeStatus = "Idle";
+    public static volatile TorrentMetadata activeMetadata = null;
+    public static volatile int activeConnectedPeers = 0;
 
+    public static void main(String[] args) throws Exception {
         if (args.length == 0) {
-            System.out.println("Usage: java App <torrent-file> [port] [mode]");
-            System.out.println("Example: java App torrents\\forza.torrent 6881 leecher");
+            AppGUI.launch();
             return;
         }
 
@@ -27,8 +31,24 @@ public class App {
         int port = args.length > 1 ? Integer.parseInt(args[1]) : 6881;
         String mode = args.length > 2 ? args[2] : "leecher";
 
+        try {
+            runClient(torrentPath, port, mode);
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+
+    public static void runClient(String torrentPath, int port, String mode) throws Exception {
+        activeStatus = "Loading torrent...";
+        activePieceManager = null;
+        activeMetadata = null;
+        activeConnectedPeers = 0;
+
         System.out.println("Loading torrent: " + torrentPath);
         TorrentMetadata metadata = TorrentMetadata.fromFile(torrentPath);
+        activeMetadata = metadata;
 
         String infoHashEncoded = metadata.getInfoHashUrlEncoded();
         byte[] infoHash = metadata.getInfoHash();
@@ -44,6 +64,7 @@ public class App {
 
         System.out.println("Starting client on port: " + port + " mode: " + mode);
 
+        activeStatus = "Announcing to tracker...";
         TrackerClient tracker = new TrackerClient(announceUrl, infoHashEncoded, port);
 
         // SEEDER MODE
@@ -58,20 +79,16 @@ public class App {
             }
 
             File fileToServe = new File(
-                    "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\test-files\\sample.pdf");
-            byte[] fileData = java.nio.file.Files.readAllBytes(fileToServe.toPath());
-            System.out.println("Serving file: " + fileToServe.getName()
-                    + " (" + fileData.length + " bytes)");
-
-            int filePieces = (int) Math.ceil((double) fileData.length / PIECE_SIZE);
-            byte[][] pieces = new byte[filePieces][];
-            for (int i = 0; i < filePieces; i++) {
-                int start = i * PIECE_SIZE;
-                int end = Math.min(start + PIECE_SIZE, fileData.length);
-                pieces[i] = new byte[end - start];
-                System.arraycopy(fileData, start, pieces[i], 0, pieces[i].length);
+                    "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\test-files\\" + metadata.getFileName());
+            if (!fileToServe.exists()) {
+                throw new FileNotFoundException("File to serve not found: " + fileToServe.getAbsolutePath());
             }
-            System.out.println("File split into " + filePieces + " pieces");
+            long fileLength = fileToServe.length();
+            System.out.println("Serving file: " + fileToServe.getName()
+                    + " (" + fileLength + " bytes)");
+
+            int filePieces = (int) Math.ceil((double) fileLength / pieceSize);
+            System.out.println("File has " + filePieces + " pieces");
 
             ServerSocket serverSocket = new ServerSocket(port);
             System.out.println("Seeder listening on port " + port + "...");
@@ -83,7 +100,7 @@ public class App {
                 final Socket s = socket;
                 new Thread(() -> {
                     try {
-                        handlePeer(s, infoHash, peerId, pieces, filePieces);
+                        handlePeer(s, infoHash, peerId, fileToServe, pieceSize, filePieces);
                     } catch (Exception e) {
                         System.out.println("Peer error: " + e.getMessage());
                     }
@@ -109,7 +126,10 @@ public class App {
             Thread.sleep(2000);
         }
 
+        activeConnectedPeers = peers.size();
+
         if (peers.isEmpty()) {
+            activeStatus = "Failed: No peers found";
             System.out.println("No peers found");
             return;
         }
@@ -119,20 +139,27 @@ public class App {
 
         PieceManager pieceManager = new PieceManager(
                 totalPieces, pieceSize, fileSize, pieceHashes);
+        activePieceManager = pieceManager;
 
         String outputPath = "c:\\Users\\Harsh\\Documents\\bit-torrent-client\\received\\"
                 + metadata.getFileName();
 
         FileWriter fileWriter = new FileWriter(outputPath, fileSize, pieceSize);
 
+        activeStatus = "Downloading...";
         PeerManager peerManager = new PeerManager(peers, pieceManager, fileWriter, infoHash, peerId, port);
         peerManager.startDownload();
 
+        if (pieceManager.isComplete()) {
+            activeStatus = "Completed";
+        } else {
+            activeStatus = "Incomplete (errors)";
+        }
         System.out.println("Done! Check received/" + metadata.getFileName());
     }
 
     private static void handlePeer(Socket socket, byte[] infoHash,
-            byte[] peerId, byte[][] pieces, int totalPieces) throws Exception {
+            byte[] peerId, File fileToServe, int pieceSize, int totalPieces) throws Exception {
 
         DataInputStream in = new DataInputStream(socket.getInputStream());
         DataOutputStream out = new DataOutputStream(socket.getOutputStream());
@@ -181,7 +208,14 @@ public class App {
 
                     System.out.println("Serving piece " + pieceIndex);
 
-                    byte[] pieceData = pieces[pieceIndex];
+                    long offset = (long) pieceIndex * pieceSize;
+                    int length = (int) Math.min(pieceSize, fileToServe.length() - offset);
+                    byte[] pieceData = new byte[length];
+
+                    try (RandomAccessFile raf = new RandomAccessFile(fileToServe, "r")) {
+                        raf.seek(offset);
+                        raf.readFully(pieceData);
+                    }
 
                     out.writeInt(9 + pieceData.length);
                     out.writeByte(7);
